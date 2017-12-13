@@ -36,7 +36,10 @@ static NSString *const RCTMapViewKey = @"MapView";
 @end
 
 @implementation AIRMapManager
-
+{
+    BOOL didCallOnMapReady;
+}
+  
 RCT_EXPORT_MODULE()
 
 - (UIView *)view
@@ -97,7 +100,17 @@ RCT_EXPORT_VIEW_PROPERTY(onMarkerDragStart, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onMarkerDrag, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onMarkerDragEnd, RCTDirectEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onCalloutPress, RCTDirectEventBlock)
-RCT_EXPORT_VIEW_PROPERTY(initialRegion, MKCoordinateRegion)
+RCT_CUSTOM_VIEW_PROPERTY(initialRegion, MKCoordinateRegion, AIRMap)
+{
+    if (json == nil) return;
+
+    // don't emit region change events when we are setting the initialRegion
+    BOOL originalIgnore = view.ignoreRegionChanges;
+    view.ignoreRegionChanges = YES;
+    [view setInitialRegion:[RCTConvert MKCoordinateRegion:json]];
+    view.ignoreRegionChanges = originalIgnore;
+}
+
 RCT_EXPORT_VIEW_PROPERTY(minZoomLevel, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(maxZoomLevel, CGFloat)
 
@@ -150,6 +163,48 @@ RCT_EXPORT_METHOD(animateToCoordinate:(nonnull NSNumber *)reactTag
             }];
         }
     }];
+}
+
+RCT_EXPORT_METHOD(animateToViewingAngle:(nonnull NSNumber *)reactTag
+                  withAngle:(double)angle
+                  withDuration:(CGFloat)duration)
+{
+  [self.bridge.uiManager addUIBlock:^(__unused RCTUIManager *uiManager, NSDictionary<NSNumber *, UIView *> *viewRegistry) {
+      id view = viewRegistry[reactTag];
+      if (![view isKindOfClass:[AIRMap class]]) {
+          RCTLogError(@"Invalid view returned from registry, expecting AIRMap, got: %@", view);
+      } else {
+          AIRMap *mapView = (AIRMap *)view;
+
+          MKMapCamera *mapCamera = [[mapView camera] copy];
+          [mapCamera setPitch:angle];
+
+          [AIRMap animateWithDuration:duration/1000 animations:^{
+              [mapView setCamera:mapCamera animated:YES];
+          }];
+      }
+  }];
+}
+
+RCT_EXPORT_METHOD(animateToBearing:(nonnull NSNumber *)reactTag
+                  withBearing:(CGFloat)bearing
+                  withDuration:(CGFloat)duration)
+{
+  [self.bridge.uiManager addUIBlock:^(__unused RCTUIManager *uiManager, NSDictionary<NSNumber *, UIView *> *viewRegistry) {
+      id view = viewRegistry[reactTag];
+      if (![view isKindOfClass:[AIRMap class]]) {
+          RCTLogError(@"Invalid view returned from registry, expecting AIRMap, got: %@", view);
+      } else {
+          AIRMap *mapView = (AIRMap *)view;
+
+          MKMapCamera *mapCamera = [[mapView camera] copy];
+          [mapCamera setHeading:bearing];
+
+          [AIRMap animateWithDuration:duration/1000 animations:^{
+              [mapView setCamera:mapCamera animated:YES];
+          }];
+      }
+  }];
 }
 
 RCT_EXPORT_METHOD(fitToElements:(nonnull NSNumber *)reactTag
@@ -656,6 +711,12 @@ static int kDragCenterContext;
 
 - (void)mapViewWillStartRenderingMap:(AIRMap *)mapView
 {
+    if (!didCallOnMapReady)
+    {
+      didCallOnMapReady = YES;
+      mapView.onMapReady(@{});
+    }
+  
     mapView.hasStartedRendering = YES;
     [mapView beginLoading];
     [self _emitRegionChangeEvent:mapView continuous:NO];
@@ -664,9 +725,6 @@ static int kDragCenterContext;
 - (void)mapViewDidFinishRenderingMap:(AIRMap *)mapView fullyRendered:(BOOL)fullyRendered
 {
     [mapView finishLoading];
-    [mapView cacheViewIfNeeded];
-    
-    mapView.onMapReady(@{});
 }
 
 #pragma mark Private
